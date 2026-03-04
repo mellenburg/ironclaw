@@ -295,11 +295,11 @@ impl AppBuilder {
     /// Delegates to `build_provider_chain` which applies all decorators
     /// (retry, smart routing, failover, circuit breaker, response cache).
     #[allow(clippy::type_complexity)]
-    pub fn init_llm(
+    pub async fn init_llm(
         &self,
     ) -> Result<(Arc<dyn LlmProvider>, Option<Arc<dyn LlmProvider>>), anyhow::Error> {
         let (llm, cheap_llm) =
-            crate::llm::build_provider_chain(&self.config.llm, self.session.clone())?;
+            crate::llm::build_provider_chain(&self.config.llm, self.session.clone()).await?;
         Ok((llm, cheap_llm))
     }
 
@@ -649,7 +649,7 @@ impl AppBuilder {
         self.init_database().await?;
         self.init_secrets().await?;
 
-        let (llm, cheap_llm) = self.init_llm()?;
+        let (llm, cheap_llm) = self.init_llm().await?;
         let (safety, tools, embeddings, workspace) = self.init_tools(&llm).await?;
 
         // Create hook registry early so runtime extension activation can register hooks.

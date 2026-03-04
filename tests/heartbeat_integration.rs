@@ -89,7 +89,9 @@ async fn test_heartbeat_end_to_end() {
         session_path: config.llm.nearai.session_path.clone(),
     })
     .await;
-    let llm = create_llm_provider(&config.llm, session).expect("Failed to create LLM provider");
+    let llm = create_llm_provider(&config.llm, session)
+        .await
+        .expect("Failed to create LLM provider");
     println!("[5/6] LLM provider created (model: {})", llm.model_name());
 
     // 6. Run heartbeat check

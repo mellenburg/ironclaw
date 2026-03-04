@@ -26,6 +26,8 @@ pub enum LlmBackend {
     OpenAiCompatible,
     /// Tinfoil private inference
     Tinfoil,
+    /// Amazon Bedrock (Converse API)
+    Bedrock,
 }
 
 impl std::str::FromStr for LlmBackend {
@@ -39,8 +41,9 @@ impl std::str::FromStr for LlmBackend {
             "ollama" => Ok(Self::Ollama),
             "openai_compatible" | "openai-compatible" | "compatible" => Ok(Self::OpenAiCompatible),
             "tinfoil" => Ok(Self::Tinfoil),
+            "bedrock" | "aws_bedrock" | "aws" => Ok(Self::Bedrock),
             _ => Err(format!(
-                "invalid LLM backend '{}', expected one of: nearai, openai, anthropic, ollama, openai_compatible, tinfoil",
+                "invalid LLM backend '{}', expected one of: nearai, openai, anthropic, ollama, openai_compatible, tinfoil, bedrock",
                 s
             )),
         }
@@ -56,6 +59,7 @@ impl std::fmt::Display for LlmBackend {
             Self::Ollama => write!(f, "ollama"),
             Self::OpenAiCompatible => write!(f, "openai_compatible"),
             Self::Tinfoil => write!(f, "tinfoil"),
+            Self::Bedrock => write!(f, "bedrock"),
         }
     }
 }
@@ -73,6 +77,7 @@ impl LlmBackend {
             Self::Ollama => "OLLAMA_MODEL",
             Self::OpenAiCompatible => "LLM_MODEL",
             Self::Tinfoil => "TINFOIL_MODEL",
+            Self::Bedrock => "BEDROCK_MODEL",
         }
     }
 }
@@ -120,6 +125,17 @@ pub struct TinfoilConfig {
     pub model: String,
 }
 
+/// Configuration for Amazon Bedrock (Converse API).
+#[derive(Debug, Clone)]
+pub struct BedrockConfig {
+    /// Bedrock model ID (e.g., "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+    pub model: String,
+    /// AWS region override (falls back to AWS_REGION / SDK default)
+    pub region: Option<String>,
+    /// AWS profile override (falls back to AWS_PROFILE / SDK default)
+    pub profile: Option<String>,
+}
+
 /// LLM provider configuration.
 ///
 /// NEAR AI remains the default backend. Users can switch to other providers
@@ -140,6 +156,8 @@ pub struct LlmConfig {
     pub openai_compatible: Option<OpenAiCompatibleConfig>,
     /// Tinfoil config (populated when backend=tinfoil)
     pub tinfoil: Option<TinfoilConfig>,
+    /// Bedrock config (populated when backend=bedrock)
+    pub bedrock: Option<BedrockConfig>,
 }
 
 /// NEAR AI configuration.
@@ -350,6 +368,23 @@ impl LlmConfig {
             None
         };
 
+        let bedrock = if backend == LlmBackend::Bedrock {
+            let model = Self::resolve_model(
+                "BEDROCK_MODEL",
+                settings,
+                "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            )?;
+            let region = optional_env("BEDROCK_REGION")?;
+            let profile = optional_env("BEDROCK_PROFILE")?;
+            Some(BedrockConfig {
+                model,
+                region,
+                profile,
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             backend,
             nearai,
@@ -358,6 +393,7 @@ impl LlmConfig {
             ollama,
             openai_compatible,
             tinfoil,
+            bedrock,
         })
     }
 }

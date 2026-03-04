@@ -7,6 +7,7 @@
 //! - **Ollama**: Local model inference
 //! - **OpenAI-compatible**: Any endpoint that speaks the OpenAI API
 
+mod bedrock;
 pub mod circuit_breaker;
 pub mod costs;
 pub mod failover;
@@ -19,6 +20,7 @@ mod rig_adapter;
 pub mod session;
 pub mod smart_routing;
 
+pub use bedrock::BedrockProvider;
 pub use circuit_breaker::{CircuitBreakerConfig, CircuitBreakerProvider};
 pub use failover::{CooldownConfig, FailoverProvider};
 pub use nearai_chat::{ModelInfo, NearAiChatProvider};
@@ -48,8 +50,9 @@ use crate::error::LlmError;
 ///
 /// - `NearAi` backend: Uses session manager for authentication (Responses API)
 ///   or API key (Chat Completions API)
+/// - `Bedrock` backend: Uses AWS SDK with standard credential chain
 /// - Other backends: Use rig-core adapter with provider-specific clients
-pub fn create_llm_provider(
+pub async fn create_llm_provider(
     config: &LlmConfig,
     session: Arc<SessionManager>,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
@@ -60,6 +63,7 @@ pub fn create_llm_provider(
         LlmBackend::Ollama => create_ollama_provider(config),
         LlmBackend::OpenAiCompatible => create_openai_compatible_provider(config),
         LlmBackend::Tinfoil => create_tinfoil_provider(config),
+        LlmBackend::Bedrock => create_bedrock_provider(config).await,
     }
 }
 
@@ -210,6 +214,23 @@ fn create_tinfoil_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvider>, L
     Ok(Arc::new(RigAdapter::new(model, &tf.model)))
 }
 
+async fn create_bedrock_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    let bedrock_config = config
+        .bedrock
+        .as_ref()
+        .ok_or_else(|| LlmError::AuthFailed {
+            provider: "bedrock".to_string(),
+        })?;
+
+    let provider = BedrockProvider::new(bedrock_config).await?;
+    tracing::info!(
+        "Using Amazon Bedrock (model: {}, region: {:?})",
+        bedrock_config.model,
+        bedrock_config.region,
+    );
+    Ok(Arc::new(provider))
+}
+
 fn create_openai_compatible_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvider>, LlmError> {
     let compat = config
         .openai_compatible
@@ -311,11 +332,11 @@ pub fn create_cheap_llm_provider(
 /// This is the single source of truth for provider chain construction,
 /// called by both `main.rs` and `app.rs`.
 #[allow(clippy::type_complexity)]
-pub fn build_provider_chain(
+pub async fn build_provider_chain(
     config: &LlmConfig,
     session: Arc<SessionManager>,
 ) -> Result<(Arc<dyn LlmProvider>, Option<Arc<dyn LlmProvider>>), LlmError> {
-    let llm = create_llm_provider(config, session.clone())?;
+    let llm = create_llm_provider(config, session.clone()).await?;
     tracing::info!("LLM provider initialized: {}", llm.model_name());
 
     // 1. Retry
@@ -472,6 +493,7 @@ mod tests {
             ollama: None,
             openai_compatible: None,
             tinfoil: None,
+            bedrock: None,
         }
     }
 

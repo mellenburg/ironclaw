@@ -1278,9 +1278,10 @@ impl SetupWizard {
             ollama: None,
             openai_compatible: None,
             tinfoil: None,
+            bedrock: None,
         };
 
-        match create_llm_provider(&config, session) {
+        match create_llm_provider(&config, session).await {
             Ok(provider) => match provider.list_models().await {
                 Ok(models) => models,
                 Err(e) => {
