@@ -3,7 +3,7 @@
 //! The wizard guides users through:
 //! 1. Database connection
 //! 2. Security (secrets master key)
-//! 3. Inference provider (NEAR AI, Anthropic, OpenAI, Ollama, OpenAI-compatible)
+//! 3. Inference provider (NEAR AI, Anthropic, OpenAI, Ollama, OpenAI-compatible, Bedrock)
 //! 4. Model selection
 //! 5. Embeddings
 //! 6. Channel configuration
@@ -799,6 +799,7 @@ impl SetupWizard {
                     "openai" => "OpenAI",
                     "ollama" => "Ollama (local)",
                     "openai_compatible" => "OpenAI-compatible endpoint",
+                    "bedrock" => "Amazon Bedrock",
                     other => other,
                 }
             };
@@ -848,6 +849,7 @@ impl SetupWizard {
             "Ollama           - local models, no API key needed",
             "OpenRouter       - 200+ models via single API key",
             "OpenAI-compatible - custom endpoint (vLLM, LiteLLM, etc.)",
+            "Amazon Bedrock   - AWS-managed models (uses AWS credentials)",
         ];
 
         let choice = select_one("Provider:", options).map_err(SetupError::Io)?;
@@ -859,6 +861,7 @@ impl SetupWizard {
             3 => self.setup_ollama()?,
             4 => self.setup_openrouter().await?,
             5 => self.setup_openai_compatible().await?,
+            6 => self.setup_bedrock()?,
             _ => return Err(SetupError::Config("Invalid provider selection".to_string())),
         }
 
@@ -1114,6 +1117,29 @@ impl SetupWizard {
         Ok(())
     }
 
+    /// Amazon Bedrock provider setup: uses AWS credential chain, no API key needed.
+    fn setup_bedrock(&mut self) -> Result<(), SetupError> {
+        self.settings.llm_backend = Some("bedrock".to_string());
+
+        print_info("Bedrock uses the standard AWS credential chain:");
+        print_info("  env vars (AWS_ACCESS_KEY_ID) → AWS profile → EC2/ECS instance role");
+        println!();
+
+        let default_model = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+        let model =
+            input(&format!("Bedrock model ID [{}]", default_model)).map_err(SetupError::Io)?;
+        let model = if model.trim().is_empty() {
+            default_model.to_string()
+        } else {
+            model.trim().to_string()
+        };
+        self.settings.selected_model = Some(model.clone());
+
+        print_info("Set BEDROCK_REGION / BEDROCK_PROFILE env vars to override AWS defaults.");
+        print_success(&format!("Bedrock configured (model: {})", model));
+        Ok(())
+    }
+
     /// Step 4: Model selection.
     ///
     /// Branches on the selected LLM backend and fetches models from the
@@ -1174,6 +1200,32 @@ impl SetupWizard {
                 }
                 self.settings.selected_model = Some(model_id.clone());
                 print_success(&format!("Selected {}", model_id));
+            }
+            "bedrock" => {
+                // Model was already selected during setup_bedrock; offer to change it
+                let models: Vec<(String, String)> = vec![
+                    (
+                        "us.anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
+                        "Claude Sonnet 4.5 (us)".into(),
+                    ),
+                    (
+                        "us.anthropic.claude-opus-4-6-v1:0".into(),
+                        "Claude Opus 4.6 (us)".into(),
+                    ),
+                    (
+                        "us.anthropic.claude-haiku-4-5-20251001-v1:0".into(),
+                        "Claude Haiku 4.5 (us)".into(),
+                    ),
+                    (
+                        "us.meta.llama3-3-70b-instruct-v1:0".into(),
+                        "Llama 3.3 70B (us)".into(),
+                    ),
+                    (
+                        "us.amazon.nova-pro-v1:0".into(),
+                        "Amazon Nova Pro (us)".into(),
+                    ),
+                ];
+                self.select_from_model_list(&models)?;
             }
             _ => {
                 // NEAR AI: use existing provider list_models()
@@ -2298,6 +2350,7 @@ impl SetupWizard {
                 "openai" => "OpenAI",
                 "ollama" => "Ollama",
                 "openai_compatible" => "OpenAI-compatible",
+                "bedrock" => "Amazon Bedrock",
                 other => other,
             };
             println!("  Provider: {}", display);
