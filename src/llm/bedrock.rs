@@ -505,6 +505,7 @@ fn converse_sdk_error(
     model: &str,
 ) -> LlmError {
     use aws_sdk_bedrockruntime::operation::converse::ConverseError;
+    use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 
     match &e {
         ConverseError::ThrottlingException(_) => LlmError::RateLimited {
@@ -518,10 +519,20 @@ fn converse_sdk_error(
             provider: "bedrock".to_string(),
             model: model.to_string(),
         },
-        _ => LlmError::RequestFailed {
-            provider: "bedrock".to_string(),
-            reason: format!("{e}"),
-        },
+        _ => {
+            // ConverseError::Unhandled Display just says "unhandled error".
+            // Extract the code + message from error metadata for useful diagnostics.
+            let meta = ProvideErrorMetadata::meta(&e);
+            let code = meta.code().unwrap_or("unknown");
+            let message = meta
+                .message()
+                .map(|m| m.to_string())
+                .unwrap_or_else(|| format!("{e}"));
+            LlmError::RequestFailed {
+                provider: "bedrock".to_string(),
+                reason: format!("[{code}] {message}"),
+            }
+        }
     }
 }
 
