@@ -39,9 +39,13 @@ impl BedrockProvider {
     pub async fn new(config: &BedrockConfig) -> Result<Self, LlmError> {
         let mut aws_config = aws_config::from_env();
 
-        if let Some(ref region) = config.region {
-            aws_config =
-                aws_config.region(aws_sdk_bedrockruntime::config::Region::new(region.clone()));
+        // Region priority: explicit config > env (AWS_REGION) > infer from model prefix > us-east-1
+        let region = config
+            .region
+            .clone()
+            .or_else(|| region_from_model_prefix(&config.model));
+        if let Some(ref r) = region {
+            aws_config = aws_config.region(aws_sdk_bedrockruntime::config::Region::new(r.clone()));
         }
 
         if let Some(ref profile) = config.profile {
@@ -49,11 +53,27 @@ impl BedrockProvider {
         }
 
         let sdk_config = aws_config.load().await;
+
+        // If the SDK still has no region after all sources, fall back to us-east-1
+        let sdk_config = if sdk_config.region().is_none() {
+            tracing::warn!("No AWS region found, defaulting to us-east-1");
+            aws_config::from_env()
+                .region(aws_sdk_bedrockruntime::config::Region::new("us-east-1"))
+                .load()
+                .await
+        } else {
+            sdk_config
+        };
+
+        let resolved_region = sdk_config
+            .region()
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| "us-east-1".to_string());
         let client = aws_sdk_bedrockruntime::Client::new(&sdk_config);
 
         tracing::info!(
             model = %config.model,
-            region = ?config.region,
+            region = %resolved_region,
             profile = ?config.profile,
             "Initialized Amazon Bedrock provider"
         );
@@ -607,6 +627,22 @@ fn document_to_json(doc: &Document) -> serde_json::Value {
                 .collect();
             serde_json::Value::Object(obj)
         }
+    }
+}
+
+/// Infer an AWS region from the Bedrock model ID prefix.
+///
+/// Cross-region inference profile IDs start with a region prefix like `us.`, `eu.`, `ap.`.
+/// We map these to a default region in that partition.
+fn region_from_model_prefix(model_id: &str) -> Option<String> {
+    if model_id.starts_with("us.") {
+        Some("us-east-1".to_string())
+    } else if model_id.starts_with("eu.") {
+        Some("eu-west-1".to_string())
+    } else if model_id.starts_with("ap.") {
+        Some("ap-northeast-1".to_string())
+    } else {
+        None
     }
 }
 
