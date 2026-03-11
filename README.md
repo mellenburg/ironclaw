@@ -73,9 +73,9 @@ IronClaw is the AI assistant you can actually trust with your personal and profe
 
 ### Prerequisites
 
-- Rust 1.85+
-- PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector) extension
-- NEAR AI account (authentication handled via setup wizard)
+- Rust 1.92+ (install via [rustup](https://rustup.rs))
+- **Database**: libSQL (embedded, zero-setup) or PostgreSQL 15+ with [pgvector](https://github.com/pgvector/pgvector)
+- **LLM provider**: Amazon Bedrock, NEAR AI, Anthropic, OpenAI, Ollama, or any OpenAI-compatible endpoint
 
 ## Download or Build
 
@@ -160,17 +160,59 @@ written to `~/.ironclaw/.env` so they are available before the database connects
 
 ### Alternative LLM Providers
 
-IronClaw defaults to NEAR AI but works with any OpenAI-compatible endpoint.
-Popular options include **OpenRouter** (300+ models), **Together AI**, **Fireworks AI**,
-**Ollama** (local), and self-hosted servers like **vLLM** or **LiteLLM**.
+IronClaw defaults to NEAR AI but supports multiple backends. Select your
+provider during `ironclaw onboard`, or create a `.env` file in your project
+directory (or `~/.ironclaw/.env`) with the settings below.
 
-Select *"OpenAI-compatible"* in the wizard, or set environment variables directly:
+#### Amazon Bedrock
+
+Uses the AWS SDK Converse API with your existing AWS credentials. No API key
+needed — authentication is handled by the standard AWS credential chain.
+
+```env
+DATABASE_BACKEND=libsql
+LLM_BACKEND=bedrock
+BEDROCK_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+BEDROCK_PROFILE=your-aws-profile    # optional, for named AWS profiles
+# BEDROCK_REGION=us-east-1          # optional, inferred from model prefix
+```
+
+The region is auto-inferred from the model ID prefix (`us.` → `us-east-1`,
+`eu.` → `eu-west-1`, `ap.` → `ap-northeast-1`). Set `BEDROCK_REGION` to
+override. Your AWS profile must have Bedrock model access enabled in the
+[AWS Console](https://console.aws.amazon.com/bedrock/home#/modelaccess).
+
+Common model IDs:
+| Model | Bedrock ID |
+|-------|-----------|
+| Claude Sonnet 4.5 | `us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+| Claude Opus 4.6 | `us.anthropic.claude-opus-4-6-v1:0` |
+| Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| Llama 3.3 70B | `us.meta.llama3-3-70b-instruct-v1:0` |
+| Amazon Nova Pro | `us.amazon.nova-pro-v1:0` |
+
+#### OpenAI-compatible (OpenRouter, vLLM, LiteLLM, etc.)
 
 ```env
 LLM_BACKEND=openai_compatible
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_API_KEY=sk-or-...
 LLM_MODEL=anthropic/claude-sonnet-4
+```
+
+#### Direct API keys (Anthropic, OpenAI)
+
+```env
+LLM_BACKEND=anthropic         # or "openai"
+ANTHROPIC_API_KEY=sk-ant-...  # or OPENAI_API_KEY=sk-...
+```
+
+#### Local models (Ollama)
+
+```env
+LLM_BACKEND=ollama
+OLLAMA_MODEL=llama3
+# OLLAMA_BASE_URL=http://localhost:11434  # default
 ```
 
 See [docs/LLM_PROVIDERS.md](docs/LLM_PROVIDERS.md) for a full provider guide.
