@@ -402,10 +402,7 @@ impl LlmProvider for BedrockProvider {
             );
         }
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| converse_sdk_error(e.into_service_error(), model))?;
+        let response = req.send().await.map_err(|e| converse_sdk_error(e, model))?;
 
         let (content, _tool_calls, input_tokens, output_tokens, finish_reason) =
             Self::extract_response(&response)?;
@@ -461,10 +458,7 @@ impl LlmProvider for BedrockProvider {
             );
         }
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| converse_sdk_error(e.into_service_error(), model))?;
+        let response = req.send().await.map_err(|e| converse_sdk_error(e, model))?;
 
         let (content, tool_calls, input_tokens, output_tokens, finish_reason) =
             Self::extract_response(&response)?;
@@ -498,41 +492,67 @@ impl LlmProvider for BedrockProvider {
 
 /// Convert an AWS SDK error from the Converse API into an `LlmError`.
 ///
-/// `SdkError::Display` only prints "service error" without detail, so we
-/// unwrap the service error to get the actual message from the inner exception.
-fn converse_sdk_error(
-    e: aws_sdk_bedrockruntime::operation::converse::ConverseError,
+/// `SdkError::Display` only prints generic labels ("service error",
+/// "dispatch failure") without detail. We match on the `SdkError` variant
+/// first to handle transport-level failures, then unwrap `ServiceError`
+/// to get the typed `ConverseError` with its actual message.
+fn converse_sdk_error<R: std::fmt::Debug>(
+    e: aws_sdk_bedrockruntime::error::SdkError<
+        aws_sdk_bedrockruntime::operation::converse::ConverseError,
+        R,
+    >,
     model: &str,
 ) -> LlmError {
+    use aws_sdk_bedrockruntime::error::SdkError;
     use aws_sdk_bedrockruntime::operation::converse::ConverseError;
     use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 
-    match &e {
-        ConverseError::ThrottlingException(_) => LlmError::RateLimited {
-            provider: "bedrock".to_string(),
-            retry_after: None,
-        },
-        ConverseError::AccessDeniedException(_) => LlmError::AuthFailed {
-            provider: "bedrock".to_string(),
-        },
-        ConverseError::ResourceNotFoundException(_) => LlmError::ModelNotAvailable {
-            provider: "bedrock".to_string(),
-            model: model.to_string(),
-        },
-        _ => {
-            // ConverseError::Unhandled Display just says "unhandled error".
-            // Extract the code + message from error metadata for useful diagnostics.
-            let meta = ProvideErrorMetadata::meta(&e);
-            let code = meta.code().unwrap_or("unknown");
-            let message = meta
-                .message()
-                .map(|m| m.to_string())
-                .unwrap_or_else(|| format!("{e}"));
-            LlmError::RequestFailed {
+    match e {
+        SdkError::ServiceError(ref svc) => match svc.err() {
+            ConverseError::ThrottlingException(_) => LlmError::RateLimited {
                 provider: "bedrock".to_string(),
-                reason: format!("[{code}] {message}"),
+                retry_after: None,
+            },
+            ConverseError::AccessDeniedException(_) => LlmError::AuthFailed {
+                provider: "bedrock".to_string(),
+            },
+            ConverseError::ResourceNotFoundException(_) => LlmError::ModelNotAvailable {
+                provider: "bedrock".to_string(),
+                model: model.to_string(),
+            },
+            other => {
+                let meta = ProvideErrorMetadata::meta(other);
+                let code = meta.code().unwrap_or("unknown");
+                let message = meta
+                    .message()
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| format!("{other}"));
+                LlmError::RequestFailed {
+                    provider: "bedrock".to_string(),
+                    reason: format!("[{code}] {message}"),
+                }
             }
-        }
+        },
+        SdkError::TimeoutError(ref te) => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("request timed out: {:?}", te),
+        },
+        SdkError::DispatchFailure(ref df) => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("dispatch failure (network/TLS/DNS): {:?}", df),
+        },
+        SdkError::ConstructionFailure(ref cf) => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("request construction failed: {:?}", cf),
+        },
+        SdkError::ResponseError(ref re) => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("unparseable response: {:?}", re),
+        },
+        _ => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("{e:?}"),
+        },
     }
 }
 
