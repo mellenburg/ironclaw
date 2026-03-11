@@ -402,29 +402,10 @@ impl LlmProvider for BedrockProvider {
             );
         }
 
-        let response = req.send().await.map_err(|e| {
-            let err_msg = format!("{e}");
-            if err_msg.contains("throttl") || err_msg.contains("ThrottlingException") {
-                LlmError::RateLimited {
-                    provider: "bedrock".to_string(),
-                    retry_after: None,
-                }
-            } else if err_msg.contains("AccessDenied") || err_msg.contains("UnrecognizedClient") {
-                LlmError::AuthFailed {
-                    provider: "bedrock".to_string(),
-                }
-            } else if err_msg.contains("model") && err_msg.contains("not found") {
-                LlmError::ModelNotAvailable {
-                    provider: "bedrock".to_string(),
-                    model: model.to_string(),
-                }
-            } else {
-                LlmError::RequestFailed {
-                    provider: "bedrock".to_string(),
-                    reason: err_msg,
-                }
-            }
-        })?;
+        let response = req
+            .send()
+            .await
+            .map_err(|e| converse_sdk_error(e.into_service_error(), model))?;
 
         let (content, _tool_calls, input_tokens, output_tokens, finish_reason) =
             Self::extract_response(&response)?;
@@ -480,24 +461,10 @@ impl LlmProvider for BedrockProvider {
             );
         }
 
-        let response = req.send().await.map_err(|e| {
-            let err_msg = format!("{e}");
-            if err_msg.contains("throttl") || err_msg.contains("ThrottlingException") {
-                LlmError::RateLimited {
-                    provider: "bedrock".to_string(),
-                    retry_after: None,
-                }
-            } else if err_msg.contains("AccessDenied") || err_msg.contains("UnrecognizedClient") {
-                LlmError::AuthFailed {
-                    provider: "bedrock".to_string(),
-                }
-            } else {
-                LlmError::RequestFailed {
-                    provider: "bedrock".to_string(),
-                    reason: err_msg,
-                }
-            }
-        })?;
+        let response = req
+            .send()
+            .await
+            .map_err(|e| converse_sdk_error(e.into_service_error(), model))?;
 
         let (content, tool_calls, input_tokens, output_tokens, finish_reason) =
             Self::extract_response(&response)?;
@@ -526,6 +493,35 @@ impl LlmProvider for BedrockProvider {
             id: self.current_model(),
             context_length: None,
         })
+    }
+}
+
+/// Convert an AWS SDK error from the Converse API into an `LlmError`.
+///
+/// `SdkError::Display` only prints "service error" without detail, so we
+/// unwrap the service error to get the actual message from the inner exception.
+fn converse_sdk_error(
+    e: aws_sdk_bedrockruntime::operation::converse::ConverseError,
+    model: &str,
+) -> LlmError {
+    use aws_sdk_bedrockruntime::operation::converse::ConverseError;
+
+    match &e {
+        ConverseError::ThrottlingException(_) => LlmError::RateLimited {
+            provider: "bedrock".to_string(),
+            retry_after: None,
+        },
+        ConverseError::AccessDeniedException(_) => LlmError::AuthFailed {
+            provider: "bedrock".to_string(),
+        },
+        ConverseError::ResourceNotFoundException(_) => LlmError::ModelNotAvailable {
+            provider: "bedrock".to_string(),
+            model: model.to_string(),
+        },
+        _ => LlmError::RequestFailed {
+            provider: "bedrock".to_string(),
+            reason: format!("{e}"),
+        },
     }
 }
 
